@@ -88,14 +88,25 @@ const HomeScreen = ({ route, navigation }) => {
     (async () => {
       try {
         setLoading(true);
-        // Using Sydney's coordinates directly
-        const sydneyCoords = {
-          latitude: -33.8688,
-          longitude: 151.2093
-        };
-        await fetchWeatherAndUV(sydneyCoords.latitude, sydneyCoords.longitude);
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        
+        if (status !== 'granted') {
+          setErrorMsg('Permission to access location was denied');
+          return;
+        }
+
+        let location = await Location.getCurrentPositionAsync({});
+        let address = await Location.reverseGeocodeAsync({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        });
+
+        const locationName = address[0]?.city || address[0]?.region || 'Unknown Location';
+        setLocationName(locationName);
+        
+        await fetchWeatherAndUV(location.coords.latitude, location.coords.longitude);
       } catch (error) {
-        setErrorMsg('Error getting weather data');
+        setErrorMsg('Error getting location or weather data');
         console.error(error);
       } finally {
         setLoading(false);
@@ -105,8 +116,6 @@ const HomeScreen = ({ route, navigation }) => {
 
   const fetchWeatherAndUV = async (latitude, longitude) => {
     try {
-      setLocationName('Sydney, Australia');
-
       const response = await fetch(
         `https://api.openweathermap.org/data/3.0/onecall?lat=${latitude}&lon=${longitude}&appid=${OPENWEATHER_API_KEY}&units=metric`
       );
@@ -160,7 +169,7 @@ const HomeScreen = ({ route, navigation }) => {
           temp: initialForecast.temp,
           clouds: data.current.clouds || 0,
           conditions: initialForecast.conditions,
-          location: 'Sydney, Australia'
+          location: locationName
         });
       } else {
         // Fallback to tomorrow's max UV from daily forecast
@@ -170,7 +179,7 @@ const HomeScreen = ({ route, navigation }) => {
           temp: Math.round(tomorrow.temp.day),
           clouds: tomorrow.clouds || 0,
           conditions: tomorrow.weather[0].main,
-          location: 'Sydney, Australia'
+          location: locationName
         });
       }
     } catch (error) {

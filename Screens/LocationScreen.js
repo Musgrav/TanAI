@@ -103,7 +103,9 @@ const LocationScreen = ({ route, navigation }) => {
       }
 
       setProgress(0.3);
-      let location = await Location.getCurrentPositionAsync({});
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High
+      });
       
       setProgress(0.5);
       // Get location name
@@ -113,9 +115,9 @@ const LocationScreen = ({ route, navigation }) => {
       });
 
       setProgress(0.7);
-      // Get weather and UV data using OneCall API
+      // Get detailed weather and UV data
       const weatherResponse = await fetch(
-        `https://api.openweathermap.org/data/3.0/onecall?lat=${location.coords.latitude}&lon=${location.coords.longitude}&appid=127b2f84953575bc8c1ef58c64f1298b&units=metric`
+        `https://api.openweathermap.org/data/3.0/onecall?lat=${location.coords.latitude}&lon=${location.coords.longitude}&appid=127b2f84953575bc8c1ef58c64f1298b&units=metric&exclude=minutely`
       );
       const weatherData = await weatherResponse.json();
 
@@ -126,31 +128,59 @@ const LocationScreen = ({ route, navigation }) => {
 
       const locationName = address[0]?.city || address[0]?.region || 'Unknown Location';
       
-      // Extract current weather and UV data with default values
+      // Extract current weather and UV data with enhanced information
       const currentWeather = {
         temp: Math.round(weatherData.current.temp) || 25,
+        feels_like: Math.round(weatherData.current.feels_like),
         conditions: weatherData.current.weather[0].main || 'Clear',
+        description: weatherData.current.weather[0].description,
         clouds: weatherData.current.clouds || 0,
-        uvi: Math.round(weatherData.current.uvi) || 5
+        humidity: weatherData.current.humidity,
+        wind_speed: weatherData.current.wind_speed,
+        uvi: Math.round(weatherData.current.uvi) || 5,
+        sunrise: new Date(weatherData.current.sunrise * 1000).toLocaleTimeString(),
+        sunset: new Date(weatherData.current.sunset * 1000).toLocaleTimeString()
       };
 
+      // Get hourly forecast for UV planning
+      const hourlyForecast = weatherData.hourly.slice(0, 24).map(hour => ({
+        time: new Date(hour.dt * 1000).toLocaleTimeString(),
+        temp: Math.round(hour.temp),
+        uvi: Math.round(hour.uvi),
+        conditions: hour.weather[0].main,
+        clouds: hour.clouds
+      }));
+
       setProgress(0.9);
-      await createTanningPlan(locationName, currentWeather);
+      await createTanningPlan(locationName, currentWeather, hourlyForecast);
     } catch (error) {
       console.error('Location/Weather Error:', error);
       // Use default values if weather fetch fails
       const defaultWeather = {
         temp: 25,
+        feels_like: 25,
         conditions: 'Clear',
+        description: 'Clear sky',
         clouds: 0,
-        uvi: 5
+        humidity: 50,
+        wind_speed: 5,
+        uvi: 5,
+        sunrise: '6:00 AM',
+        sunset: '6:00 PM'
       };
+      const defaultHourlyForecast = Array(24).fill({}).map((_, i) => ({
+        time: new Date(Date.now() + i * 3600000).toLocaleTimeString(),
+        temp: 25,
+        uvi: 5,
+        conditions: 'Clear',
+        clouds: 0
+      }));
       const locationName = 'Unknown Location';
-      await createTanningPlan(locationName, defaultWeather);
+      await createTanningPlan(locationName, defaultWeather, defaultHourlyForecast);
     }
   };
 
-  const createTanningPlan = async (locationName, weatherData) => {
+  const createTanningPlan = async (locationName, weatherData, hourlyForecast) => {
     try {
       console.log('Creating plan with data:', {
         gender,
@@ -160,7 +190,8 @@ const LocationScreen = ({ route, navigation }) => {
         frequency,
         timeframe,
         locationName,
-        weatherData
+        weatherData,
+        hourlyForecast
       });
 
       const response = await openai.chat.completions.create({
@@ -176,16 +207,30 @@ const LocationScreen = ({ route, navigation }) => {
             - Frequency: ${frequency || 'Unknown'}
             - Timeframe: ${timeframe || 'Unknown'}
             - Location: ${locationName}
-            - Current Weather: ${weatherData.conditions}, ${weatherData.temp}°C
-            - Current UV Index: ${weatherData.uvi}
             
-            Consider safety first, and provide a detailed but concise plan that includes:
-            1. Recommended tanning duration
-            2. Best times of day
-            3. Required protection (SPF)
+            Current Weather Conditions:
+            - Temperature: ${weatherData.temp}°C (Feels like: ${weatherData.feels_like}°C)
+            - Weather: ${weatherData.description}
+            - UV Index: ${weatherData.uvi}
+            - Humidity: ${weatherData.humidity}%
+            - Wind Speed: ${weatherData.wind_speed} m/s
+            - Sunrise: ${weatherData.sunrise}
+            - Sunset: ${weatherData.sunset}
+            
+            Consider the following when creating the plan:
+            1. Current UV index of ${weatherData.uvi} and daily forecast
+            2. Weather conditions: ${weatherData.conditions}
+            3. Best tanning hours based on UV forecast
+            4. Cloud coverage: ${weatherData.clouds}%
+            
+            Provide a detailed but concise plan that includes:
+            1. Recommended tanning duration based on current conditions
+            2. Best times of day considering UV forecast
+            3. Required protection (SPF) based on UV index and skin type
             4. Frequency of sessions
             5. Expected timeline to reach goal
-            6. Safety precautions
+            6. Safety precautions specific to current weather
+            7. Recommendations for hydration based on temperature and humidity
             
             Keep the response structured and easy to read.`
           }
@@ -202,10 +247,17 @@ const LocationScreen = ({ route, navigation }) => {
         location: locationName,
         weather: {
           temp: weatherData.temp,
+          feels_like: weatherData.feels_like,
           conditions: weatherData.conditions,
+          description: weatherData.description,
           clouds: weatherData.clouds,
+          humidity: weatherData.humidity,
+          wind_speed: weatherData.wind_speed,
+          sunrise: weatherData.sunrise,
+          sunset: weatherData.sunset
         },
         uvIndex: weatherData.uvi,
+        hourlyForecast,
         recommendations: response.choices[0].message.content
       };
 
