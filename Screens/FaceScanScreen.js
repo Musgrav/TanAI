@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, Alert, Dimensions, Animated, Easing } from 'react-native';
 import * as ExpoCamera from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import OpenAI from 'openai';
 import { EXPO_PUBLIC_OPENAI_API_KEY } from '@env';
+import Svg, { Defs, Rect, Mask, Ellipse, LinearGradient, Stop, Circle, Path } from 'react-native-svg';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 // Debug logging
 console.log('Camera module:', ExpoCamera);
@@ -13,6 +17,96 @@ const openai = new OpenAI({
   dangerouslyAllowBrowser: true // Required for React Native
 });
 
+const OVAL_WIDTH = 260;
+const OVAL_HEIGHT = 340;
+const BORDER_WIDTH = 1.5;
+const SQUARE_PADDING = 40; // Padding around the oval
+
+const LoadingScreen = ({ progress }) => {
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const loadingTexts = [
+    "Analyzing skin tone...",
+    "Detecting undertones...",
+    "Processing features...",
+    "Almost there..."
+  ];
+  const [currentTextIndex, setCurrentTextIndex] = useState(0);
+
+  useEffect(() => {
+    // Rotation animation
+    Animated.loop(
+      Animated.timing(spinValue, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+
+    // Text fade animation
+    const textInterval = setInterval(() => {
+      fadeAnim.setValue(0);
+      setCurrentTextIndex((prev) => (prev + 1) % loadingTexts.length);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }).start();
+    }, 2000);
+
+    return () => clearInterval(textInterval);
+  }, []);
+
+  const spin = spinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const progressValue = progress.interpolate({
+    inputRange: [0, 100],
+    outputRange: [0, 100],
+    extrapolate: 'clamp'
+  });
+
+  return (
+    <View style={StyleSheet.absoluteFillObject}>
+      <Svg height="100%" width="100%" style={StyleSheet.absoluteFill}>
+        <Defs>
+          <LinearGradient id="loadingGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0" stopColor="#FF9933" />
+            <Stop offset="1" stopColor="#FF6633" />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill="url(#loadingGrad)" />
+      </Svg>
+      <View style={loadingStyles.content}>
+        <Animated.View style={[loadingStyles.spinnerContainer, { transform: [{ rotate: spin }] }]}>
+          <Svg height="160" width="160" viewBox="0 0 100 100">
+            <Circle
+              cx="50"
+              cy="50"
+              r="45"
+              stroke="white"
+              strokeWidth="8"
+              fill="none"
+              strokeDasharray="70 180"
+            />
+          </Svg>
+        </Animated.View>
+        
+        <Animated.Text style={[loadingStyles.loadingText, { opacity: fadeAnim }]}>
+          {loadingTexts[currentTextIndex]}
+        </Animated.Text>
+        
+        <Animated.Text style={loadingStyles.percentageText}>
+          {Math.round(progressValue.__getValue())}%
+        </Animated.Text>
+      </View>
+    </View>
+  );
+};
+
 export default function FaceScanScreen({ navigation, route }) {
   const [hasPermission, setHasPermission] = useState(null);
   const cameraRef = useRef(null);
@@ -20,6 +114,7 @@ export default function FaceScanScreen({ navigation, route }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const progressAnimation = useRef(new Animated.Value(0)).current;
 
   const checkAPIAccess = async () => {
     try {
@@ -43,7 +138,10 @@ export default function FaceScanScreen({ navigation, route }) {
           {
             role: "user",
             content: [
-              { type: "text", text: "This is a test message. Respond with 'Vision API is working'." },
+              { 
+                type: "text", 
+                text: "Analyze this person's skin. Focus only on: 1) Fitzpatrick scale type (I-VI), 2) Undertone (warm/cool/neutral), 3) One key characteristic. Be very concise and direct, using this format:\nType: [I-VI]\nUndertone: [warm/cool/neutral]\nKey: [characteristic]" 
+              },
               {
                 type: "image_url",
                 image_url: {
@@ -53,6 +151,8 @@ export default function FaceScanScreen({ navigation, route }) {
             ]
           }
         ],
+        max_tokens: 300,
+        temperature: 0.3,
         store: true
       });
       console.log('Vision API test successful:', visionResponse.choices[0].message.content);
@@ -152,6 +252,16 @@ export default function FaceScanScreen({ navigation, route }) {
 
   const analyzeSkin = async (photo) => {
     setIsAnalyzing(true);
+    
+    // Start progress animation
+    progressAnimation.setValue(0);
+    Animated.timing(progressAnimation, {
+      toValue: 100,
+      duration: 3000, // Total analysis animation duration
+      easing: Easing.bezier(0.23, 1, 0.32, 1),
+      useNativeDriver: false,
+    }).start();
+
     try {
       console.log('Starting skin analysis...');
       
@@ -162,7 +272,10 @@ export default function FaceScanScreen({ navigation, route }) {
           {
             role: "user",
             content: [
-              { type: "text", text: "Analyze this person's skin tone and characteristics. Provide: 1) Current skin tone on Fitzpatrick scale, 2) Undertone, 3) Key characteristics. Keep it concise." },
+              { 
+                type: "text", 
+                text: "Analyze this person's skin. Focus only on: 1) Fitzpatrick scale type (I-VI), 2) Undertone (warm/cool/neutral), 3) One key characteristic. Be very concise and direct, using this format:\nType: [I-VI]\nUndertone: [warm/cool/neutral]\nKey: [characteristic]" 
+              },
               {
                 type: "image_url",
                 image_url: {
@@ -172,8 +285,8 @@ export default function FaceScanScreen({ navigation, route }) {
             ]
           }
         ],
-        max_tokens: 150,
-        temperature: 0.7,
+        max_tokens: 300,
+        temperature: 0.3,
         store: true
       });
 
@@ -258,42 +371,126 @@ export default function FaceScanScreen({ navigation, route }) {
             style={styles.camera}
             facing="front"
             onCameraReady={onCameraReady}
-          >
+          />
+          <View style={styles.overlayContainer}>
+            <Svg height="100%" width="100%" style={StyleSheet.absoluteFill}>
+              <Defs>
+                <Mask id="gradientMask">
+                  <Rect width="100%" height="100%" fill="white" />
+                  <Rect
+                    x={(SCREEN_WIDTH - (OVAL_WIDTH + SQUARE_PADDING * 2)) / 2}
+                    y={(SCREEN_HEIGHT - (OVAL_HEIGHT + SQUARE_PADDING * 2)) / 2}
+                    width={OVAL_WIDTH + SQUARE_PADDING * 2}
+                    height={OVAL_HEIGHT + SQUARE_PADDING * 2}
+                    rx="20"
+                    ry="20"
+                    fill="black"
+                  />
+                </Mask>
+                <Mask id="squareMask">
+                  <Rect width="100%" height="100%" fill="black" />
+                  <Rect
+                    x={(SCREEN_WIDTH - (OVAL_WIDTH + SQUARE_PADDING * 2)) / 2}
+                    y={(SCREEN_HEIGHT - (OVAL_HEIGHT + SQUARE_PADDING * 2)) / 2}
+                    width={OVAL_WIDTH + SQUARE_PADDING * 2}
+                    height={OVAL_HEIGHT + SQUARE_PADDING * 2}
+                    rx="20"
+                    ry="20"
+                    fill="white"
+                  />
+                  <Ellipse
+                    rx={OVAL_WIDTH / 2}
+                    ry={OVAL_HEIGHT / 2}
+                    cx={SCREEN_WIDTH / 2}
+                    cy={SCREEN_HEIGHT / 2}
+                    fill="black"
+                  />
+                </Mask>
+                <LinearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <Stop offset="0" stopColor="#FF9933" />
+                  <Stop offset="1" stopColor="#FF6633" />
+                </LinearGradient>
+              </Defs>
+              {/* Orange gradient background */}
+              <Rect
+                width="100%"
+                height="100%"
+                fill="url(#grad)"
+                mask="url(#gradientMask)"
+              />
+              {/* White square with oval cutout */}
+              <Rect
+                width="100%"
+                height="100%"
+                fill="white"
+                opacity="0.4"
+                mask="url(#squareMask)"
+              />
+              {/* Oval borders */}
+              <Ellipse
+                rx={OVAL_WIDTH / 2}
+                ry={OVAL_HEIGHT / 2}
+                cx={SCREEN_WIDTH / 2}
+                cy={SCREEN_HEIGHT / 2}
+                fill="transparent"
+                stroke="rgba(255,255,255,0.8)"
+                strokeWidth={BORDER_WIDTH}
+              />
+              <Ellipse
+                rx={(OVAL_WIDTH - 10) / 2}
+                ry={(OVAL_HEIGHT - 10) / 2}
+                cx={SCREEN_WIDTH / 2}
+                cy={SCREEN_HEIGHT / 2}
+                fill="transparent"
+                stroke="rgba(255,255,255,0.4)"
+                strokeWidth={BORDER_WIDTH}
+              />
+            </Svg>
             <View style={styles.overlay}>
+              <Text style={styles.titleText}>Scan your skin</Text>
               <Text style={styles.guideText}>
-                {isCameraReady ? 'Position your face in good lighting' : 'Preparing camera...'}
+                Take a selfie so our AI can analyze your skin
               </Text>
+              <View style={styles.frameContainer}>
+                <View style={styles.spacer} />
+              </View>
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity 
+                  style={[
+                    styles.button,
+                    (!isCameraReady || isAnalyzing) && styles.buttonDisabled
+                  ]} 
+                  onPress={takePicture}
+                  disabled={!isCameraReady || isAnalyzing}
+                >
+                  <Text style={styles.buttonText}>
+                    {!isCameraReady ? 'Camera Loading...' : isAnalyzing ? 'Analyzing...' : 'Take a Selfie 📸'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity 
-                style={[
-                  styles.button,
-                  (!isCameraReady || isAnalyzing) && styles.buttonDisabled
-                ]} 
-                onPress={takePicture}
-                disabled={!isCameraReady || isAnalyzing}
-              >
-                <Text style={styles.text}>
-                  {!isCameraReady ? 'Camera Loading...' : isAnalyzing ? 'Analyzing...' : 'Take Picture'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </ExpoCamera.CameraView>
+          </View>
         </View>
       ) : (
         <View style={styles.imageContainer}>
-          <Image source={{ uri: capturedImage }} style={styles.camera} />
-          <TouchableOpacity 
-            style={[styles.button, isAnalyzing && styles.buttonDisabled]}
-            onPress={() => setCapturedImage(null)}
-            disabled={isAnalyzing}
-          >
-            <Text style={styles.text}>
-              {isAnalyzing ? 'Analyzing...' : 'Retake'}
-            </Text>
-          </TouchableOpacity>
-          {analysisResult && (
-            <Text style={styles.analysisText}>{analysisResult}</Text>
+          {isAnalyzing ? (
+            <LoadingScreen progress={progressAnimation} />
+          ) : (
+            <>
+              <Image source={{ uri: capturedImage }} style={styles.camera} />
+              <TouchableOpacity 
+                style={[styles.button, isAnalyzing && styles.buttonDisabled]}
+                onPress={() => setCapturedImage(null)}
+                disabled={isAnalyzing}
+              >
+                <Text style={styles.text}>
+                  {isAnalyzing ? 'Analyzing...' : 'Retake'}
+                </Text>
+              </TouchableOpacity>
+              {analysisResult && (
+                <Text style={styles.analysisText}>{analysisResult}</Text>
+              )}
+            </>
           )}
         </View>
       )}
@@ -304,7 +501,6 @@ export default function FaceScanScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'black',
   },
   cameraContainer: {
     flex: 1,
@@ -312,27 +508,60 @@ const styles = StyleSheet.create({
   camera: {
     flex: 1,
   },
-  buttonContainer: {
+  overlayContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  overlay: {
     flex: 1,
-    backgroundColor: 'transparent',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    margin: 20,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 60,
+  },
+  titleText: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: 'white',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  guideText: {
+    color: 'white',
+    fontSize: 18,
+    textAlign: 'center',
+    marginBottom: 30,
+    fontWeight: '500',
+  },
+  frameContainer: {
+    width: OVAL_WIDTH + SQUARE_PADDING * 2,
+    height: OVAL_HEIGHT + SQUARE_PADDING * 2,
+    marginVertical: 20,
+  },
+  spacer: {
+    flex: 1,
+  },
+  buttonContainer: {
+    width: '100%',
+    alignItems: 'center',
+    paddingHorizontal: 20,
   },
   button: {
-    alignSelf: 'flex-end',
-    alignItems: 'center',
+    width: '100%',
     backgroundColor: 'white',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
+    padding: 16,
+    borderRadius: 25,
+    alignItems: 'center',
   },
   buttonDisabled: {
-    backgroundColor: '#cccccc',
+    backgroundColor: 'rgba(255,255,255,0.6)',
   },
-  text: {
+  buttonText: {
     fontSize: 18,
-    color: 'black',
+    fontWeight: '600',
+    color: '#FF6633',
   },
   imageContainer: {
     flex: 1,
@@ -348,18 +577,37 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     margin: 20,
   },
-  overlay: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    padding: 10,
+  text: {
+    fontSize: 18,
+    color: 'black',
   },
-  guideText: {
+});
+
+const loadingStyles = StyleSheet.create({
+  content: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  spinnerContainer: {
+    width: 160,
+    height: 160,
+    marginBottom: 30,
+  },
+  loadingText: {
+    fontSize: 18,
     color: 'white',
-    fontSize: 16,
+    marginBottom: 20,
+    fontWeight: '500',
     textAlign: 'center',
+  },
+  percentageText: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: 'white',
+    marginTop: 10,
+    textAlign: 'center',
+    width: '100%',
   },
 });

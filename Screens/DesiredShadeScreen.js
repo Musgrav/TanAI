@@ -8,39 +8,87 @@ import {
   Dimensions,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import Slider from '@react-native-community/slider';
 
-const skinShades = [
-  { color: '#FFE4C4', name: 'Very Light' },  // Bisque
-  { color: '#F5DEB3', name: 'Light' },       // Wheat
-  { color: '#DEB887', name: 'Light Medium' }, // Burlywood
-  { color: '#D2B48C', name: 'Medium' },      // Tan
-  { color: '#B3612E', name: 'Medium Deep' },  // RosyBrown
-  { color: '#8B4513', name: 'Deep' },        // SaddleBrown
-];
+// Fitzpatrick scale colors with undertones
+const skinShades = {
+  'TYPE I': { color: '#FFE4D6', name: 'Very Light' },
+  'TYPE II': { color: '#FFD5BA', name: 'Light' },
+  'TYPE III': { color: '#E8B88A', name: 'Medium Light' },
+  'TYPE IV': { color: '#C99C67', name: 'Medium' },
+  'TYPE V': { color: '#8C593B', name: 'Medium Dark' },
+  'TYPE VI': { color: '#643D26', name: 'Dark' },
+};
+
+// Helper function to interpolate between colors
+const interpolateColor = (color1, color2, factor) => {
+  const r1 = parseInt(color1.slice(1, 3), 16);
+  const g1 = parseInt(color1.slice(3, 5), 16);
+  const b1 = parseInt(color1.slice(5, 7), 16);
+  
+  const r2 = parseInt(color2.slice(1, 3), 16);
+  const g2 = parseInt(color2.slice(3, 5), 16);
+  const b2 = parseInt(color2.slice(5, 7), 16);
+  
+  const r = Math.round(r1 + (r2 - r1) * factor);
+  const g = Math.round(g1 + (g2 - g1) * factor);
+  const b = Math.round(b1 + (b2 - b1) * factor);
+  
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+};
 
 const DesiredShadeScreen = ({ route, navigation }) => {
-  const [selectedShade, setSelectedShade] = useState(null);
   const { gender, goal, timeframe, currentShade } = route.params;
+  
+  // Find the current shade index
+  const shadeTypes = Object.keys(skinShades);
+  const currentIndex = shadeTypes.findIndex(type => 
+    skinShades[type].name === currentShade.name
+  );
+  
+  const [sliderValue, setSliderValue] = useState(currentIndex * 20);
+  
+  // Calculate available range (can only go darker)
+  const minValue = currentIndex * 20;
+  const maxValue = (shadeTypes.length - 1) * 20;
 
-  // Find the index of current shade to filter available options
-  const currentShadeIndex = skinShades.findIndex(shade => shade.name === currentShade.name);
+  const getInterpolatedColor = (value) => {
+    const baseIndex = Math.floor(value / 20);
+    const nextIndex = Math.min(baseIndex + 1, shadeTypes.length - 1);
+    const factor = (value % 20) / 20;
+    
+    const color1 = skinShades[shadeTypes[baseIndex]].color;
+    const color2 = skinShades[shadeTypes[nextIndex]].color;
+    
+    return interpolateColor(color1, color2, factor);
+  };
 
-  // Only show shades darker than current shade
-  const availableShades = skinShades.slice(currentShadeIndex + 1);
+  const getCurrentShadeName = (value) => {
+    const baseIndex = Math.floor(value / 20);
+    return skinShades[shadeTypes[baseIndex]].name;
+  };
 
-  const handleSelectShade = (index) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setSelectedShade(currentShadeIndex + 1 + index);
+  const handleSliderChange = (value) => {
+    if (value !== sliderValue) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setSliderValue(value);
+    }
   };
 
   const handleNext = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const baseIndex = Math.floor(sliderValue / 20);
+    const selectedType = shadeTypes[baseIndex];
     navigation.navigate('TanningMethod', {
       gender,
       goal,
       timeframe,
       currentShade,
-      targetShade: skinShades[selectedShade],
+      targetShade: {
+        ...skinShades[selectedType],
+        type: selectedType,
+        color: getInterpolatedColor(sliderValue)
+      },
     });
   };
 
@@ -49,40 +97,43 @@ const DesiredShadeScreen = ({ route, navigation }) => {
       <View style={styles.content}>
         <Text style={styles.emoji}>🎯</Text>
         <Text style={styles.title}>Target Skin Tone</Text>
-        <Text style={styles.subtitle}>Select your desired skin color</Text>
+        <Text style={styles.subtitle}>Adjust the slider to select your desired shade</Text>
 
-        <View style={styles.currentShadeContainer}>
-          <Text style={styles.currentShadeLabel}>Current:</Text>
-          <View 
-            style={[
-              styles.currentShadeCircle,
-              { backgroundColor: currentShade.color }
-            ]} 
+        <View style={styles.shadeDisplayContainer}>
+          <View style={styles.shadeBox}>
+            <Text style={styles.shadeLabel}>Current</Text>
+            <View style={[styles.colorCircle, { backgroundColor: skinShades[shadeTypes[currentIndex]].color }]} />
+            <Text style={styles.shadeName}>{skinShades[shadeTypes[currentIndex]].name}</Text>
+          </View>
+          
+          <View style={styles.arrow}>
+            <Text style={styles.arrowText}>→</Text>
+          </View>
+          
+          <View style={styles.shadeBox}>
+            <Text style={styles.shadeLabel}>Target</Text>
+            <View style={[styles.colorCircle, { backgroundColor: getInterpolatedColor(sliderValue) }]} />
+            <Text style={styles.shadeName}>{getCurrentShadeName(sliderValue)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.sliderContainer}>
+          <Slider
+            style={styles.slider}
+            minimumValue={minValue}
+            maximumValue={maxValue}
+            value={sliderValue}
+            onValueChange={handleSliderChange}
+            step={1}
+            minimumTrackTintColor="#FF6B3D"
+            maximumTrackTintColor="#D1D1D6"
+            thumbTintColor="#FF6B3D"
           />
-          <Text style={styles.currentShadeName}>{currentShade.name}</Text>
+          <View style={styles.sliderLabels}>
+            <Text style={styles.sliderLabel}>Lighter</Text>
+            <Text style={styles.sliderLabel}>Darker</Text>
+          </View>
         </View>
-
-        <View style={styles.shadesGrid}>
-          {availableShades.map((shade, index) => (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.shadeButton,
-                { backgroundColor: shade.color },
-                selectedShade === currentShadeIndex + 1 + index && styles.selectedShade
-              ]}
-              onPress={() => handleSelectShade(index)}
-            >
-              {selectedShade === currentShadeIndex + 1 + index && (
-                <Text style={styles.checkmark}>✓</Text>
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.shadeName}>
-          {selectedShade !== null ? skinShades[selectedShade].name : 'Select your target shade'}
-        </Text>
       </View>
 
       <View style={styles.bottomContainer}>
@@ -97,11 +148,7 @@ const DesiredShadeScreen = ({ route, navigation }) => {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[
-            styles.nextButton,
-            selectedShade === null && styles.disabledButton
-          ]}
-          disabled={selectedShade === null}
+          style={styles.nextButton}
           onPress={handleNext}
         >
           <Text style={styles.nextButtonText}>Next</Text>
@@ -110,9 +157,6 @@ const DesiredShadeScreen = ({ route, navigation }) => {
     </SafeAreaView>
   );
 };
-
-const { width } = Dimensions.get('window');
-const SHADE_SIZE = (width - 80) / 3;
 
 const styles = StyleSheet.create({
   container: {
@@ -142,75 +186,60 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 30,
   },
-  currentShadeContainer: {
+  shadeDisplayContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 40,
-    backgroundColor: '#f5f5f5',
-    padding: 15,
-    borderRadius: 20,
+    justifyContent: 'space-between',
     width: '100%',
-    justifyContent: 'center',
+    padding: 20,
+    marginBottom: 40,
   },
-  currentShadeLabel: {
+  shadeBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  arrow: {
+    paddingHorizontal: 10,
+  },
+  arrowText: {
+    fontSize: 24,
+    color: '#666',
+  },
+  shadeLabel: {
     fontSize: 16,
     color: '#666',
-    marginRight: 10,
+    marginBottom: 10,
   },
-  currentShadeCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    marginRight: 10,
+  colorCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#ddd',
   },
-  currentShadeName: {
+  shadeName: {
     fontSize: 16,
     color: '#333',
     fontWeight: '600',
+    marginBottom: 5,
   },
-  shadesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 20,
-    justifyContent: 'center',
-    marginBottom: 20,
+  sliderContainer: {
     width: '100%',
-    maxWidth: 400,
+    paddingHorizontal: 20,
   },
-  shadeButton: {
-    width: SHADE_SIZE,
-    height: SHADE_SIZE,
-    borderRadius: SHADE_SIZE / 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
+  slider: {
+    width: '100%',
+    height: 40,
   },
-  selectedShade: {
-    borderColor: '#FF6B3D',
-    borderWidth: 3,
+  sliderLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
   },
-  checkmark: {
-    color: '#000',
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  shadeName: {
-    fontSize: 20,
-    color: '#333',
-    textAlign: 'center',
-    marginTop: 20,
-    fontWeight: '600',
+  sliderLabel: {
+    fontSize: 14,
+    color: '#666',
   },
   bottomContainer: {
     padding: 20,
@@ -237,9 +266,6 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     width: '45%',
     alignItems: 'center',
-  },
-  disabledButton: {
-    opacity: 0.5,
   },
   nextButtonText: {
     color: '#fff',
